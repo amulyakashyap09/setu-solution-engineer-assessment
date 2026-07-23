@@ -6,8 +6,8 @@ settlement leg.
 
 **Python 3.12 · FastAPI · SQLite**
 
-- Live demo: `<YOUR_DEPLOYMENT_URL>`
-- Interactive API docs: `<YOUR_DEPLOYMENT_URL>/docs`
+- Live demo: `https://setu-solution-engineer-assessment.onrender.com`
+- Interactive API docs: `https://setu-solution-engineer-assessment.onrender.com/docs`
 - Postman collection: [`postman_collection.json`](./postman_collection.json)
 
 ---
