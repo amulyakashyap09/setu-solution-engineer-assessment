@@ -1,0 +1,22 @@
+# Render blueprint. Push this repo, then: New > Blueprint > select the repo.
+services:
+  - type: web
+    name: payment-reconciliation
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_PATH
+        value: /app/data/payments.db
+      - key: SEED_ON_STARTUP
+        value: "true"
+      - key: STALE_AFTER_HOURS
+        value: "48"
+    # A disk makes the database survive restarts. Remove this block on the
+    # free plan (disks are a paid feature) - the service will simply
+    # re-seed from sample_events.json on every cold start.
+    # disk:
+    #   name: sqlite-data
+    #   mountPath: /app/data
+    #   sizeGB: 1

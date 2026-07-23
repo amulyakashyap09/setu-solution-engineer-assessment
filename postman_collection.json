@@ -1,0 +1,1296 @@
+{
+  "info": {
+    "name": "Payment Reconciliation Service",
+    "description": "Backend service for ingesting payment lifecycle events and reconciling the payment leg against the settlement leg.\n\nSet the `base_url` variable to your deployment, or leave it as http://localhost:8000 for local use.\n\nRun the folders top to bottom: **1. Health** confirms the service is up, **2. Ingest** demonstrates idempotency, then the query folders read it back.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "transaction_id",
+      "value": "demo-txn-001"
+    },
+    {
+      "key": "merchant_id",
+      "value": "merchant_1"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Health & Meta",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Liveness plus row counts. Use this first to confirm the service is up and seeded."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('service is up', () => pm.response.to.have.status(200));",
+                  "pm.test('has data', () => pm.expect(pm.response.json().events).to.be.above(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Service index",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": []
+            },
+            "description": "Lists every available endpoint."
+          }
+        },
+        {
+          "name": "List merchants",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/merchants",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "merchants"
+              ]
+            },
+            "description": "All merchants with transaction volume and exact totals."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Ingest Events (idempotency demo)",
+      "item": [
+        {
+          "name": "Ingest a single event",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/events",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Returns 201 with created=1. Run it a second time to see 200 with duplicates=1.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_id\": \"demo-evt-001\",\n  \"event_type\": \"payment_initiated\",\n  \"transaction_id\": \"demo-txn-001\",\n  \"merchant_id\": \"merchant_1\",\n  \"merchant_name\": \"QuickMart\",\n  \"amount\": 1499.5,\n  \"currency\": \"INR\",\n  \"timestamp\": \"2026-04-01T10:00:00+00:00\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 201', () => pm.expect([200,201]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ingest the SAME event again (duplicate)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/events",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Idempotency: same event_id. Returns 200, created=0, duplicates=1. No second row, no state change.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_id\": \"demo-evt-001\",\n  \"event_type\": \"payment_initiated\",\n  \"transaction_id\": \"demo-txn-001\",\n  \"merchant_id\": \"merchant_1\",\n  \"merchant_name\": \"QuickMart\",\n  \"amount\": 1499.5,\n  \"currency\": \"INR\",\n  \"timestamp\": \"2026-04-01T10:00:00+00:00\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 not 201', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('nothing created', () => pm.expect(b.created).to.eql(0));",
+                  "pm.test('flagged duplicate', () => pm.expect(b.duplicates).to.eql(1));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ingest a batch (array)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/events",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "A bare array of events, applied atomically in one transaction.",
+            "body": {
+              "mode": "raw",
+              "raw": "[\n  {\n    \"event_id\": \"demo-evt-002\",\n    \"event_type\": \"payment_processed\",\n    \"transaction_id\": \"demo-txn-001\",\n    \"merchant_id\": \"merchant_1\",\n    \"merchant_name\": \"QuickMart\",\n    \"amount\": 1499.5,\n    \"currency\": \"INR\",\n    \"timestamp\": \"2026-04-01T10:05:00+00:00\"\n  },\n  {\n    \"event_id\": \"demo-evt-003\",\n    \"event_type\": \"settled\",\n    \"transaction_id\": \"demo-txn-001\",\n    \"merchant_id\": \"merchant_1\",\n    \"merchant_name\": \"QuickMart\",\n    \"amount\": 1499.5,\n    \"currency\": \"INR\",\n    \"timestamp\": \"2026-04-01T14:00:00+00:00\"\n  }\n]",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 201', () => pm.expect([200,201]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ingest a batch (wrapped object)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/events",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "The same batch under an `events` key. Both shapes are accepted.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"events\": [\n    {\n      \"event_id\": \"demo-evt-004\",\n      \"event_type\": \"payment_initiated\",\n      \"transaction_id\": \"demo-txn-002\",\n      \"merchant_id\": \"merchant_1\",\n      \"merchant_name\": \"QuickMart\",\n      \"amount\": 880.0,\n      \"currency\": \"INR\",\n      \"timestamp\": \"2026-04-02T09:00:00+00:00\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 201', () => pm.expect([200,201]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ingest out-of-order events",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/events",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Settled arrives before initiated. The MIN() fold means the projection converges on the same state regardless of arrival order.",
+            "body": {
+              "mode": "raw",
+              "raw": "[\n  {\n    \"event_id\": \"demo-evt-005\",\n    \"event_type\": \"settled\",\n    \"transaction_id\": \"demo-txn-003\",\n    \"merchant_id\": \"merchant_1\",\n    \"merchant_name\": \"QuickMart\",\n    \"amount\": 1499.5,\n    \"currency\": \"INR\",\n    \"timestamp\": \"2026-04-03T18:00:00+00:00\"\n  },\n  {\n    \"event_id\": \"demo-evt-006\",\n    \"event_type\": \"payment_initiated\",\n    \"transaction_id\": \"demo-txn-003\",\n    \"merchant_id\": \"merchant_1\",\n    \"merchant_name\": \"QuickMart\",\n    \"amount\": 1499.5,\n    \"currency\": \"INR\",\n    \"timestamp\": \"2026-04-03T09:00:00+00:00\"\n  },\n  {\n    \"event_id\": \"demo-evt-007\",\n    \"event_type\": \"payment_processed\",\n    \"transaction_id\": \"demo-txn-003\",\n    \"merchant_id\": \"merchant_1\",\n    \"merchant_name\": \"QuickMart\",\n    \"amount\": 1499.5,\n    \"currency\": \"INR\",\n    \"timestamp\": \"2026-04-03T09:05:00+00:00\"\n  }\n]",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 201', () => pm.expect([200,201]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create a discrepancy (settled after failure)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/events",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Settlement recorded against a payment the rail reported as failed. Shows up as SETTLED_AFTER_FAILURE, severity high.",
+            "body": {
+              "mode": "raw",
+              "raw": "[\n  {\n    \"event_id\": \"demo-evt-008\",\n    \"event_type\": \"payment_initiated\",\n    \"transaction_id\": \"demo-txn-bad\",\n    \"merchant_id\": \"merchant_1\",\n    \"merchant_name\": \"QuickMart\",\n    \"amount\": 1499.5,\n    \"currency\": \"INR\",\n    \"timestamp\": \"2026-04-04T09:00:00+00:00\"\n  },\n  {\n    \"event_id\": \"demo-evt-009\",\n    \"event_type\": \"payment_failed\",\n    \"transaction_id\": \"demo-txn-bad\",\n    \"merchant_id\": \"merchant_1\",\n    \"merchant_name\": \"QuickMart\",\n    \"amount\": 1499.5,\n    \"currency\": \"INR\",\n    \"timestamp\": \"2026-04-04T09:10:00+00:00\"\n  },\n  {\n    \"event_id\": \"demo-evt-010\",\n    \"event_type\": \"settled\",\n    \"transaction_id\": \"demo-txn-bad\",\n    \"merchant_id\": \"merchant_1\",\n    \"merchant_name\": \"QuickMart\",\n    \"amount\": 1499.5,\n    \"currency\": \"INR\",\n    \"timestamp\": \"2026-04-04T13:00:00+00:00\"\n  }\n]",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 201', () => pm.expect([200,201]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Validation error: bad event type",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/events",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Returns 422 with a per-field error list in the standard envelope.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_id\": \"demo-evt-bad\",\n  \"event_type\": \"payment_reversed\",\n  \"transaction_id\": \"demo-txn-001\",\n  \"merchant_id\": \"merchant_1\",\n  \"merchant_name\": \"QuickMart\",\n  \"amount\": 1499.5,\n  \"currency\": \"INR\",\n  \"timestamp\": \"2026-04-01T10:00:00+00:00\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422', () => pm.response.to.have.status(422));",
+                  "pm.test('envelope', () => pm.expect(pm.response.json().error.code).to.eql('validation_error'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Validation error: negative amount",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/events",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "Amount must be greater than zero.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_id\": \"demo-evt-neg\",\n  \"event_type\": \"payment_initiated\",\n  \"transaction_id\": \"demo-txn-001\",\n  \"merchant_id\": \"merchant_1\",\n  \"merchant_name\": \"QuickMart\",\n  \"amount\": -10,\n  \"currency\": \"INR\",\n  \"timestamp\": \"2026-04-01T10:00:00+00:00\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422', () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Transactions",
+      "item": [
+        {
+          "name": "List transactions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/transactions?limit=20&offset=0",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Page size, max 500"
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "description": "Rows to skip"
+                }
+              ]
+            },
+            "description": "Default page: 50 most recent first."
+          }
+        },
+        {
+          "name": "Filter by merchant",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/transactions?merchant_id={{merchant_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "merchant_id",
+                  "value": "{{merchant_id}}",
+                  "description": "Repeatable"
+                }
+              ]
+            },
+            "description": "Repeat merchant_id to filter on several merchants at once."
+          }
+        },
+        {
+          "name": "Filter by status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/transactions?status=settled",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "settled",
+                  "description": "initiated|processed|failed|settled"
+                }
+              ]
+            },
+            "description": "Rolled-up status. Repeatable for multiple values."
+          }
+        },
+        {
+          "name": "Filter by settlement status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/transactions?settlement_status=pending",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "settlement_status",
+                  "value": "pending",
+                  "description": "pending|settled"
+                }
+              ]
+            },
+            "description": "The settlement axis, tracked independently of the payment axis."
+          }
+        },
+        {
+          "name": "Filter by date range",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/transactions?date_from=2026-01-01&date_to=2026-03-31&date_field=first_event_at",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "date_from",
+                  "value": "2026-01-01",
+                  "description": "Inclusive"
+                },
+                {
+                  "key": "date_to",
+                  "value": "2026-03-31",
+                  "description": "Inclusive"
+                },
+                {
+                  "key": "date_field",
+                  "value": "first_event_at",
+                  "description": "Which timestamp to filter on"
+                }
+              ]
+            },
+            "description": "Bare dates are inclusive of the whole day. Full ISO-8601 also accepted."
+          }
+        },
+        {
+          "name": "Filter by amount range",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/transactions?min_amount=1000&max_amount=50000",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "min_amount",
+                  "value": "1000",
+                  "description": ""
+                },
+                {
+                  "key": "max_amount",
+                  "value": "50000",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Amounts are compared in exact integer minor units."
+          }
+        },
+        {
+          "name": "Sort by amount descending",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/transactions?sort_by=amount&sort_order=desc&limit=10",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "sort_by",
+                  "value": "amount",
+                  "description": "Whitelisted column"
+                },
+                {
+                  "key": "sort_order",
+                  "value": "desc",
+                  "description": "asc|desc"
+                },
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Sort keys come from a whitelist; transaction_id is always appended as a tiebreaker so paging is stable."
+          }
+        },
+        {
+          "name": "Transactions that received duplicate events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/transactions?has_duplicates=true",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "has_duplicates",
+                  "value": "true",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Audit view of which transactions saw upstream redelivery."
+          }
+        },
+        {
+          "name": "Combined filters",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/transactions?merchant_id={{merchant_id}}&status=settled&date_from=2026-02-01&sort_by=amount&sort_order=desc&limit=5",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "merchant_id",
+                  "value": "{{merchant_id}}",
+                  "description": ""
+                },
+                {
+                  "key": "status",
+                  "value": "settled",
+                  "description": ""
+                },
+                {
+                  "key": "date_from",
+                  "value": "2026-02-01",
+                  "description": ""
+                },
+                {
+                  "key": "sort_by",
+                  "value": "amount",
+                  "description": ""
+                },
+                {
+                  "key": "sort_order",
+                  "value": "desc",
+                  "description": ""
+                },
+                {
+                  "key": "limit",
+                  "value": "5",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "All filters are ANDed together and resolved in SQL."
+          }
+        },
+        {
+          "name": "Get transaction detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/transactions/{{transaction_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions",
+                "{{transaction_id}}"
+              ]
+            },
+            "description": "Transaction state, merchant, any discrepancies, and the full chronological event history."
+          }
+        },
+        {
+          "name": "Get transaction detail (404)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/transactions/does-not-exist",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "transactions",
+                "does-not-exist"
+              ]
+            },
+            "description": "Standard not_found envelope."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Reconciliation",
+      "item": [
+        {
+          "name": "Summary by merchant",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/reconciliation/summary?group_by=merchant",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reconciliation",
+                "summary"
+              ],
+              "query": [
+                {
+                  "key": "group_by",
+                  "value": "merchant",
+                  "description": "merchant|date|status|currency"
+                }
+              ]
+            },
+            "description": "Counts, exact amounts, settlement rate and discrepancy count per merchant."
+          }
+        },
+        {
+          "name": "Summary by date",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/reconciliation/summary?group_by=date",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reconciliation",
+                "summary"
+              ],
+              "query": [
+                {
+                  "key": "group_by",
+                  "value": "date",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Grouped on the date of each transaction's first event."
+          }
+        },
+        {
+          "name": "Summary by status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/reconciliation/summary?group_by=status",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reconciliation",
+                "summary"
+              ],
+              "query": [
+                {
+                  "key": "group_by",
+                  "value": "status",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Distribution across the four rolled-up statuses."
+          }
+        },
+        {
+          "name": "Summary by merchant and date",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/reconciliation/summary?group_by=merchant,date&limit=50",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reconciliation",
+                "summary"
+              ],
+              "query": [
+                {
+                  "key": "group_by",
+                  "value": "merchant,date",
+                  "description": "Comma-separated"
+                },
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Multiple dimensions at once, in a single GROUP BY."
+          }
+        },
+        {
+          "name": "Summary totals only",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/reconciliation/summary?group_by=",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reconciliation",
+                "summary"
+              ],
+              "query": [
+                {
+                  "key": "group_by",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Empty group_by returns the grand total with no groups."
+          }
+        },
+        {
+          "name": "Summary filtered by merchant and date",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/reconciliation/summary?group_by=date&merchant_id={{merchant_id}}&date_from=2026-02-01&date_to=2026-02-28",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reconciliation",
+                "summary"
+              ],
+              "query": [
+                {
+                  "key": "group_by",
+                  "value": "date",
+                  "description": ""
+                },
+                {
+                  "key": "merchant_id",
+                  "value": "{{merchant_id}}",
+                  "description": ""
+                },
+                {
+                  "key": "date_from",
+                  "value": "2026-02-01",
+                  "description": ""
+                },
+                {
+                  "key": "date_to",
+                  "value": "2026-02-28",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Filters apply before aggregation."
+          }
+        },
+        {
+          "name": "All discrepancies",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/reconciliation/discrepancies?limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reconciliation",
+                "discrepancies"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Every type except the informational DUPLICATE_EVENTS, most severe first. counts_by_type covers the whole filtered population, not just this page."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('has counts', () => pm.expect(pm.response.json()).to.have.property('counts_by_type'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Settled after failure (high severity)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/reconciliation/discrepancies?type=SETTLED_AFTER_FAILURE&limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reconciliation",
+                "discrepancies"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "SETTLED_AFTER_FAILURE",
+                  "description": "Repeatable"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Settlement recorded against a failed payment: real money at risk."
+          }
+        },
+        {
+          "name": "Processed but never settled",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/reconciliation/discrepancies?type=PROCESSED_NOT_SETTLED&limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reconciliation",
+                "discrepancies"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "PROCESSED_NOT_SETTLED",
+                  "description": ""
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Past the staleness window with no settlement."
+          }
+        },
+        {
+          "name": "Stuck in initiated",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/reconciliation/discrepancies?type=STUCK_IN_INITIATED&limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reconciliation",
+                "discrepancies"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "STUCK_IN_INITIATED",
+                  "description": ""
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Initiated and abandoned."
+          }
+        },
+        {
+          "name": "Duplicate events (opt-in audit signal)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/reconciliation/discrepancies?type=DUPLICATE_EVENTS&limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reconciliation",
+                "discrepancies"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "DUPLICATE_EVENTS",
+                  "description": ""
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Redelivered events. Excluded by default because they are absorbed safely and are not a money problem."
+          }
+        },
+        {
+          "name": "High severity only",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/reconciliation/discrepancies?severity=high&limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reconciliation",
+                "discrepancies"
+              ],
+              "query": [
+                {
+                  "key": "severity",
+                  "value": "high",
+                  "description": "high|medium|low"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Triage view for an operations team."
+          }
+        },
+        {
+          "name": "Tighter staleness window",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/reconciliation/discrepancies?stale_after_hours=2&limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reconciliation",
+                "discrepancies"
+              ],
+              "query": [
+                {
+                  "key": "stale_after_hours",
+                  "value": "2",
+                  "description": "Default 48"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Lower stale_after_hours to widen the net; raise it to narrow."
+          }
+        },
+        {
+          "name": "Point-in-time report (as_of)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/reconciliation/discrepancies?as_of=2026-03-01T00:00:00Z&stale_after_hours=48&limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reconciliation",
+                "discrepancies"
+              ],
+              "query": [
+                {
+                  "key": "as_of",
+                  "value": "2026-03-01T00:00:00Z",
+                  "description": ""
+                },
+                {
+                  "key": "stale_after_hours",
+                  "value": "48",
+                  "description": ""
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Re-run the report as it would have looked at a past instant."
+          }
+        },
+        {
+          "name": "Discrepancies for one merchant",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/reconciliation/discrepancies?merchant_id={{merchant_id}}&limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reconciliation",
+                "discrepancies"
+              ],
+              "query": [
+                {
+                  "key": "merchant_id",
+                  "value": "{{merchant_id}}",
+                  "description": ""
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Scoped to a single merchant."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Event Log (audit)",
+      "item": [
+        {
+          "name": "List raw events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/events?limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "The immutable append-only log, newest first."
+          }
+        },
+        {
+          "name": "Events for one transaction",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/events?transaction_id={{transaction_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "transaction_id",
+                  "value": "{{transaction_id}}",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Every event ever received for a transaction."
+          }
+        },
+        {
+          "name": "Events by type",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/events?event_type=settled&limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "event_type",
+                  "value": "settled",
+                  "description": ""
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Filter the log by lifecycle event type."
+          }
+        }
+      ]
+    }
+  ]
+}
